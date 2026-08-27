@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>로그인 / 회원가입 설계</title>
+<style>
+  :root{
+    --bg:#ffffff; --fg:#1c1e21; --muted:#5c6470; --line:#e2e5ea;
+    --code-bg:#f5f6f8; --accent:#2f6fd0; --warn-bg:#fff8e6; --warn-line:#e3b341;
+    --note-bg:#eef4fd; --th-bg:#f0f2f5;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#16181c; --fg:#e6e8eb; --muted:#9aa3ae; --line:#2d313a;
+      --code-bg:#1e2127; --accent:#6ea8fe; --warn-bg:#2b2410; --warn-line:#8a6d1f;
+      --note-bg:#16233a; --th-bg:#21242b;
+    }
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0 auto; padding:40px 24px 96px; max-width:900px;
+    background:var(--bg); color:var(--fg);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Malgun Gothic","Apple SD Gothic Neo",sans-serif;
+    line-height:1.7; font-size:16px;
+  }
+  h1{font-size:1.9rem; margin:0 0 4px; letter-spacing:-.02em}
+  h2{font-size:1.35rem; margin:56px 0 14px; padding-bottom:8px; border-bottom:2px solid var(--line)}
+  h3{font-size:1.05rem; margin:32px 0 10px; color:var(--accent)}
+  .sub{color:var(--muted); margin:0 0 32px; font-size:.92rem}
+  code{font-family:"Cascadia Mono",Consolas,"D2Coding",monospace; font-size:.88em;
+       background:var(--code-bg); padding:2px 5px; border-radius:4px}
+  pre{background:var(--code-bg); border:1px solid var(--line); border-radius:8px;
+      padding:14px 16px; overflow-x:auto; line-height:1.55}
+  pre code{background:none; padding:0; font-size:.84rem}
+  table{border-collapse:collapse; width:100%; margin:16px 0; font-size:.92rem; display:block; overflow-x:auto}
+  th,td{border:1px solid var(--line); padding:8px 11px; text-align:left; vertical-align:top}
+  th{background:var(--th-bg); font-weight:600}
+  ul,ol{padding-left:22px}
+  li{margin:5px 0}
+  .box{border-left:4px solid var(--accent); background:var(--note-bg);
+       padding:12px 16px; border-radius:0 6px 6px 0; margin:18px 0}
+  .warn{border-left-color:var(--warn-line); background:var(--warn-bg)}
+  .box p:first-child{margin-top:0} .box p:last-child{margin-bottom:0}
+  .tag{display:inline-block; font-size:.72rem; font-weight:700; letter-spacing:.04em;
+       padding:2px 8px; border-radius:99px; background:var(--accent); color:#fff; vertical-align:middle}
+  hr{border:0; border-top:1px solid var(--line); margin:48px 0}
+  .meta{font-size:.88rem; color:var(--muted)}
+</style>
+</head>
+<body>
+
+<h1>로그인 / 회원가입 설계</h1>
+<p class="sub">
+  L20260713_Day03 &middot; UE5 클라이언트 &harr; Python 웹서버 &harr; MySQL<br>
+  작성일 2026-08-26 &middot; 근거 문서: <code>docs/작업사항.md</code>, <code>docs/서버구조도.png</code>, <code>docs/테이블 구조.png</code>
+</p>
+
+<div class="box warn">
+  <p><strong>검토 상태</strong> — 1장(흐름·API 계약)은 채팅에서 합의했습니다.
+  2장(구현 구조)과 3장(에러 처리·검증)은 이 문서에서 처음 제시하는 내용입니다.
+  <strong>승인 전까지 구현을 시작하지 않습니다.</strong></p>
+</div>
+
+<h2>0. 확정된 결정사항</h2>
+
+<table>
+  <tr><th>항목</th><th>결정</th><th>근거</th></tr>
+  <tr><td>로그인 위치</td><td>기존 <code>WBP_Title</code>에 <strong>게이트로 추가</strong>. 로그인 성공 전에는 StartServer / ConnectServer 비활성</td><td>신규 화면·위젯 클래스 없이 기존 위젯 하나만 수정</td></tr>
+  <tr><td>비밀번호</td><td><strong>평문 저장</strong></td><td>실습 목적. DB 그리드에서 값 확인 용이 (아래 경고 참조)</td></tr>
+  <tr><td>회원가입 입력</td><td><code>user_id</code>, <code>passwd</code>만. 서버가 <code>nickname = user_id</code>, <code>level = 1</code>로 채움</td><td>입력칸 추가 없음 — UI 변경 최소화</td></tr>
+  <tr><td>서버 주소</td><td>기존 <code>ServerIP</code> 입력칸 재사용. <code>http://{ServerIP}:8080</code></td><td>추가 설정 파일 불필요</td></tr>
+  <tr><td>웹 프레임워크</td><td><strong>FastAPI + PyMySQL</strong></td><td><code>/docs</code> 자동 Swagger UI로 UE 없이 서버 단독 검증 가능</td></tr>
+  <tr><td>프로토콜</td><td>HTTP + JSON</td><td><code>작업사항.md</code> 4번</td></tr>
+  <tr><td>클라이언트 언어</td><td>C++ 전용 (블루프린트 로직 없음)</td><td><code>작업사항.md</code> 6번</td></tr>
+  <tr><td>패키지 설치</td><td><code>Server/.venv</code> 가상환경</td><td>전역 파이썬을 건드리지 않고 <code>requirements.txt</code>로 재현 가능</td></tr>
+  <tr><td>서버 검증</td><td><code>/docs</code> Swagger UI + Workbench <strong>수동 확인</strong></td><td>자동 테스트(pytest)는 이번 범위에서 제외</td></tr>
+</table>
+
+<div class="box warn">
+  <p><strong>비밀번호 평문 저장은 의도적인 선택입니다.</strong> 실습 프로젝트 전제로 진행합니다.
+  실제 서비스로 전환할 경우 <code>passwd</code>를 <code>VARCHAR(60)</code>으로 넓히고 bcrypt 해시로 교체해야 합니다.
+  이 문서에서 더 이상 언급하지 않습니다.</p>
+</div>
+
+<hr>
+
+<h2>1. 전체 흐름과 API 계약 <span class="tag">합의됨</span></h2>
+
+<h3>데이터 흐름</h3>
+<pre><code>[WBP_Title]                 [UWebApiSubsystem]        [FastAPI :8080]      [MySQL seul.member]
+ 로그인 버튼 ──클릭──▶ RequestLogin(IP, ID, PW)
+                              └─ POST /login ─────────▶ 조회 ──────────────▶ SELECT
+                                                        ◀─ JSON ────────────┘
+                              ◀─ OnLoginResult.Broadcast(bSuccess, Message)
+ 위젯이 구독 ──▶ 성공: DataGameInstanceSubsystem에 저장된 nickname / level 표시
+                        StartServer / ConnectServer 활성화
+                실패: 메시지만 표시, 버튼 계속 비활성</code></pre>
+
+<h3>엔드포인트</h3>
+<p>엔드포인트 2개, 요청·응답 스키마는 양쪽이 동일합니다.</p>
+
+<pre><code>POST /signup                          POST /login
+{ "user_id": "junios",                { "user_id": "junios",
+  "passwd":  "1234" }                   "passwd":  "1234" }</code></pre>
+
+<pre><code>// 성공
+{ "result": true,  "message": "",                         "idx": 1, "nickname": "junios", "level": 1 }
+
+// 실패 (가입: 아이디 중복 / 로그인: 아이디·비번 불일치)
+{ "result": false, "message": "이미 존재하는 아이디입니다", "idx": 0, "nickname": "",       "level": 0 }</code></pre>
+
+<div class="box">
+  <p><strong>설계 판단 — 인증 실패도 HTTP 200으로 응답합니다.</strong></p>
+  <p>401/400을 쓰지 않는 이유는, 로그인 실패가 서버가 정상적으로 처리한 <em>결과</em>이지 프로토콜 오류가 아니기 때문입니다.
+  이렇게 하면 C++ 쪽 분기가 두 갈래로 단순해집니다.</p>
+  <ul>
+    <li><strong>서버가 답을 줬다 (200)</strong> → <code>result</code> 값으로 성공/실패 판정</li>
+    <li><strong>서버가 답을 못 줬다 (연결 실패 · 5xx)</strong> → 서버 장애로 안내</li>
+  </ul>
+  <p>덕분에 사용자에게 <em>"비밀번호가 틀렸습니다"</em>와 <em>"서버에 연결할 수 없습니다"</em>를 정확히 구분해 보여줄 수 있습니다.</p>
+</div>
+
+<h3>전제</h3>
+<ul>
+  <li>웹서버 포트는 <code>8080</code> 고정 (언리얼 MCP 플러그인이 8000을 점유해 2026-08-26에 8000에서 변경). <code>ServerIP</code> 칸에 포트까지 적는 경우(<code>127.0.0.1:7777</code>)는 다루지 않습니다.</li>
+  <li>회원가입 중복 검사는 <code>SELECT</code> 후 <code>INSERT</code>가 아니라 <strong><code>user_id</code>에 UNIQUE 제약을 걸고 <code>IntegrityError</code>를 잡는</strong> 방식입니다. 동시에 같은 아이디로 요청이 들어와도 중복 행이 생기지 않습니다.</li>
+</ul>
+
+<div class="box">
+  <p><strong>확인 완료 (2026-08-26)</strong> — <code>seul.member.user_id</code>에 UNIQUE 인덱스가 이미 존재합니다. 스키마 변경 없이 진행합니다.</p>
+</div>
+
+<h3>개발 환경 확인 결과 (2026-08-26)</h3>
+<table>
+  <tr><th>항목</th><th>상태</th><th>비고</th></tr>
+  <tr><td>Python</td><td>3.12.10</td><td><code>C:\Users\User\AppData\Local\Programs\Python\Python312</code></td></tr>
+  <tr><td>pip</td><td>25.0.1</td><td>&mdash;</td></tr>
+  <tr><td>MySQL 서버</td><td>3306 LISTENING</td><td>33060(X protocol)도 열려 있음</td></tr>
+  <tr><td><code>pydantic</code></td><td>2.13.4 설치됨</td><td>v2 &mdash; 본 설계의 <code>Field(min_length=1)</code> 문법과 일치</td></tr>
+  <tr><td><code>uvicorn</code></td><td>0.51.0 설치됨</td><td>&mdash;</td></tr>
+  <tr><td><code>httpx</code></td><td>0.28.1 설치됨</td><td>FastAPI <code>TestClient</code>가 요구하는 패키지</td></tr>
+  <tr><td><code>fastapi</code></td><td><strong>미설치</strong></td><td>설치 필요</td></tr>
+  <tr><td><code>pymysql</code></td><td><strong>미설치</strong></td><td>설치 필요</td></tr>
+  <tr><td><code>mysql</code> CLI</td><td>PATH에 없음</td><td>PyMySQL은 CLI를 쓰지 않으므로 무관</td></tr>
+</table>
+
+<hr>
+
+<h2>2. 구현 구조 <span class="tag">검토 요청</span></h2>
+
+<h3>2-1. 파이썬 서버</h3>
+
+<pre><code>Server/
+  .venv/             # 가상환경 (git 제외)
+  main.py            # FastAPI 앱, /signup /login 라우트, Pydantic 모델
+  db.py              # PyMySQL 커넥션 생성 + DB 접속 설정
+  requirements.txt   # fastapi, uvicorn, pymysql</code></pre>
+
+<p><strong>환경 준비</strong> &mdash; 전역에 이미 있는 <code>pydantic</code>·<code>uvicorn</code>·<code>httpx</code>도 가상환경 안에 다시 설치됩니다(의도된 격리).</p>
+<pre><code>python -m venv Server/.venv
+Server/.venv/Scripts/activate
+pip install -r Server/requirements.txt
+
+# 실행
+cd Server &amp;&amp; .venv/Scripts/uvicorn main:app --reload
+# → http://127.0.0.1:8080/docs</code></pre>
+
+<p><code>.gitignore</code>에 <code>Server/.venv/</code> 한 줄을 추가합니다.</p>
+
+<p>엔드포인트가 2개뿐이라 <code>main.py</code> 하나로도 충분하지만, DB 접속 정보만 <code>db.py</code>로 분리합니다.
+PC마다 바뀌는 값이 한 파일에 모여 있어야 다른 환경에서 실행할 때 고칠 곳이 명확합니다.
+Pydantic 모델은 클래스 2개뿐이라 <code>main.py</code>에 그대로 둡니다 &mdash; 별도 <code>models.py</code>는 지금 규모에서 파일만 늘립니다.</p>
+
+<pre><code># db.py
+DB_CONFIG = dict(host="127.0.0.1", port=3306, user="root",
+                 password="&lt;비밀번호&gt;", db="seul", charset="utf8mb4")
+
+def get_connection():
+    return pymysql.connect(**DB_CONFIG, cursorclass=pymysql.cursors.DictCursor)</code></pre>
+
+<pre><code># main.py 골자
+class AuthRequest(BaseModel):
+    user_id: str = Field(min_length=1)
+    passwd:  str = Field(min_length=1)
+
+class AuthResponse(BaseModel):
+    result: bool
+    message: str = ""
+    idx: int = 0
+    nickname: str = ""
+    level: int = 0
+
+@app.post("/signup", response_model=AuthResponse)   # INSERT, IntegrityError → 중복
+@app.post("/login",  response_model=AuthResponse)   # SELECT idx, nickname, level</code></pre>
+
+<ul>
+  <li><strong>커넥션</strong>: 요청마다 <code>with</code>로 열고 닫습니다. 이 규모에서 커넥션 풀은 불필요합니다.</li>
+  <li><strong>가입</strong>: <code>INSERT INTO member (user_id, passwd, nickname, level) VALUES (%s, %s, %s, 1)</code> &mdash; <code>nickname</code>에 <code>user_id</code>를 그대로 넣고, <code>cursor.lastrowid</code>를 <code>idx</code>로 반환합니다.</li>
+  <li><strong>로그인</strong>: <code>SELECT idx, nickname, level FROM member WHERE user_id = %s AND passwd = %s</code> &mdash; 결과가 없으면 실패.</li>
+  <li>모든 SQL은 <strong>파라미터 바인딩(<code>%s</code>)</strong>을 씁니다. 문자열 포매팅으로 조립하지 않습니다.</li>
+</ul>
+
+<h3>2-2. UE5 C++</h3>
+
+<p><strong>모듈 의존성</strong> &mdash; <code>L20260713_Day03.Build.cs</code>의 <code>PublicDependencyModuleNames</code>에 추가 (현재 셋 다 없음):</p>
+<pre><code>"HTTP", "Json", "JsonUtilities"</code></pre>
+
+<p><strong>신규: <code>Source/L20260713_Day03/Web/WebApiSubsystem.h / .cpp</code></strong></p>
+
+<pre><code>DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FWebApiResultSignature,
+    const bool, bInSuccess, const FString&amp;, InMessage);
+
+UCLASS()
+class L20260713_DAY03_API UWebApiSubsystem : public UGameInstanceSubsystem
+{
+    GENERATED_BODY()
+public:
+    UPROPERTY(BlueprintAssignable, Category = "WebApi")
+    FWebApiResultSignature OnLoginResult;
+
+    UPROPERTY(BlueprintAssignable, Category = "WebApi")
+    FWebApiResultSignature OnSignUpResult;
+
+    void RequestLogin (const FString&amp; InServerIP, const FString&amp; InUserID, const FString&amp; InPassword);
+    void RequestSignUp(const FString&amp; InServerIP, const FString&amp; InUserID, const FString&amp; InPassword);
+
+private:
+    void SendAuthRequest(const FString&amp; InServerIP, const FString&amp; InPath,
+                         const FString&amp; InUserID, const FString&amp; InPassword,
+                         FWebApiResultSignature&amp; InDelegate);
+};</code></pre>
+
+<p><code>SendAuthRequest</code> 안에서 <code>OnProcessRequestComplete</code>를 <strong>람다</strong>로 바인딩합니다
+(기존 커밋 <code>6ac3a21</code>에서 이미 쓰던 방식). 응답이 성공이면 <code>UDataGameInstanceSubsystem</code>에
+<code>Idx / Nickname / Level / bLoggedIn</code>을 저장한 뒤 델리게이트를 <code>Broadcast</code>합니다.</p>
+
+<div class="box">
+  <p><strong>왜 <code>DataGameInstanceSubsystem</code>에 합치지 않고 클래스를 나누는가</strong> &mdash;
+  <code>DataGameInstanceSubsystem</code>은 <em>값 보관</em>, <code>WebApiSubsystem</code>은 <em>통신</em>으로 책임이 다르고
+  각각 따로 이해·확인할 수 있습니다. 나중에 소켓 서버나 다른 API가 붙어도 통신 코드가 한 곳에 모입니다.</p>
+</div>
+
+<p><strong>수정: <code>DataGameInstanceSubsystem.h</code></strong> &mdash; 필드 4개 추가</p>
+<pre><code>UPROPERTY(BlueprintReadOnly, Category = "Data") bool    bLoggedIn = false;
+UPROPERTY(BlueprintReadOnly, Category = "Data") int32   Idx = 0;
+UPROPERTY(BlueprintReadOnly, Category = "Data") FString Nickname;
+UPROPERTY(BlueprintReadOnly, Category = "Data") int32   Level = 0;</code></pre>
+
+<p><strong>수정: <code>TitleWidgetBase.h / .cpp</code></strong></p>
+<ul>
+  <li>위젯 추가: <code>LoginButton</code>, <code>SignUpButton</code> (<code>UButton</code>), <code>InfoText</code> (<code>UTextBlock</code>)</li>
+  <li><code>NativeConstruct</code>: 신규 위젯을 <strong>기존 <code>StartServerButton</code>과 동일하게 <code>GetWidgetFromName</code></strong>으로 바인딩 후 <code>AddDynamic</code>.
+      이어서 <code>WebApiSubsystem</code>의 <code>OnLoginResult</code> / <code>OnSignUpResult</code>를 구독하고,
+      <code>StartServerButton</code>·<code>ConnectServerButton</code>은 <code>SetIsEnabled(false)</code>로 시작.</li>
+  <li><code>Login()</code> / <code>SignUp()</code>: 입력이 비어 있으면 안내만 하고 요청을 보내지 않음 &rarr; <code>SaveData()</code> &rarr; 서브시스템 호출</li>
+  <li><code>ProcessLoginResult(bool, const FString&amp;)</code>: 성공 시 <code>InfoText</code>에 <code>junios (Lv.1)</code> 표시 + 두 버튼 <code>SetIsEnabled(true)</code>. 실패 시 메시지만 표시</li>
+  <li><code>ProcessSignUpResult(bool, const FString&amp;)</code>: 메시지만 표시. <strong>가입 후 자동 로그인하지 않습니다</strong> &mdash; 사용자가 로그인 버튼을 다시 누릅니다 (흐름이 단순하고, 가입과 로그인 경로가 각각 독립적으로 확인됩니다)</li>
+  <li><code>StartServer()</code> / <code>ConnectServer()</code>: 함수 진입부에서 <code>bLoggedIn</code>이 아니면 <code>return</code>. 버튼 비활성이 1차 방어, 이 검사가 2차 방어입니다</li>
+</ul>
+
+<div class="box warn">
+  <p><strong>바인딩 지정자 오타 &mdash; 수정 완료 (커밋 <code>d568bf4</code>)</strong></p>
+  <p><code>TitleWidgetBase.h</code>의 <code>UserID</code>, <code>Password</code>, <code>ServerIP</code>, <code>ConnectServerButton</code>에 붙어 있던
+  <code>meta = (WidgetBind)</code>는 언리얼이 인식하는 지정자가 아니어서 해당 위젯들이 바인딩되지 않은 채 남아 있었습니다.
+  정식 지정자인 <code>meta = (BindWidget)</code>으로 고쳤습니다.</p>
+  <p><strong>확인이 필요한 부작용</strong> &mdash; <code>BindWidget</code>은 이름이 일치하는 위젯이 블루프린트에 반드시 있어야 합니다.
+  <code>WBP_Title</code>에 <code>UserID</code>, <code>Password</code>, <code>ServerIP</code>, <code>ConnectServerButton</code>과
+  <em>정확히 같은 이름</em>의 위젯이 없으면 이제 <strong>블루프린트 컴파일 에러</strong>가 납니다.
+  런타임에 조용히 <code>null</code>이 되던 것보다 낫지만, 이름이 다르면 디자이너에서 맞춰줘야 합니다.</p>
+  <p>신규 위젯(<code>LoginButton</code>, <code>SignUpButton</code>, <code>InfoText</code>)도 같은 <code>BindWidget</code> 방식으로 통일합니다.</p>
+</div>
+
+<div class="box warn">
+  <p><strong>미결 &mdash; <code>LobbyWidgetBase.h</code>에 같은 오타 6개</strong></p>
+  <p><code>StartButton</code>, <code>ChatButton</code>, <code>ChatInput</code>, <code>LeftTimeText</code>,
+  <code>ConnectCountText</code>, <code>ChatScrollBox</code>가 모두 <code>meta = (WidgetBind)</code>이며,
+  <code>GetWidgetFromName</code> 폴백 없이 전부 <code>if (X)</code> 가드로만 감싸져 있습니다.</p>
+  <p>이번 작업 범위 밖이고, 잘못 고치면 <code>WBP_Lobby</code> 컴파일이 깨질 수 있어 <strong>건드리지 않았습니다.</strong>
+  별도 작업으로 다룰지 결정 필요.</p>
+</div>
+
+<hr>
+
+<h2>3. 에러 처리와 검증 <span class="tag">검토 요청</span></h2>
+
+<h3>3-1. 에러 대응표</h3>
+<table>
+  <tr><th>상황</th><th>서버 응답</th><th>클라이언트 표시</th></tr>
+  <tr><td>아이디 중복 (가입)</td><td>200 / <code>result:false</code></td><td>이미 존재하는 아이디입니다</td></tr>
+  <tr><td>아이디·비번 불일치 (로그인)</td><td>200 / <code>result:false</code></td><td>아이디 또는 비밀번호가 올바르지 않습니다</td></tr>
+  <tr><td>아이디/비번 빈 값</td><td>요청 자체를 보내지 않음<br>(서버도 <code>min_length=1</code>로 방어 &rarr; 422)</td><td>아이디와 비밀번호를 입력해 주세요</td></tr>
+  <tr><td>그 밖의 비정상 응답 (422 · 500 등)</td><td>200이 아닌 모든 코드</td><td>요청을 처리할 수 없습니다 (코드 <em>N</em>)</td></tr>
+  <tr><td>서버 미실행 / 주소 오류</td><td>&mdash;</td><td>서버에 연결할 수 없습니다</td></tr>
+  <tr><td>응답 JSON 파싱 실패</td><td>&mdash;</td><td>응답을 해석할 수 없습니다</td></tr>
+</table>
+
+<p>빈 입력을 클라이언트에서 한 번, 서버에서 또 한 번 막는 것은 중복이 아닙니다.
+클라이언트 검사는 불필요한 왕복을 줄이는 편의이고, 서버 검사는 신뢰 경계에서의 방어입니다.</p>
+
+<h3>3-2. 검증 순서</h3>
+<p>서버를 먼저 완성해 단독으로 통과시킨 뒤 C++에 손을 댑니다. 두 쪽이 동시에 안 될 때 원인을 찾느라 헤매는 상황을 막기 위해서입니다.</p>
+
+<table>
+  <tr><th>#</th><th>단계</th><th>검증 방법</th></tr>
+  <tr><td>1</td><td><code>uvicorn main:app --reload</code> 실행 후 <code>/docs</code>에서 <code>/signup</code> 호출</td><td>Workbench에서 <code>member</code> 행 1개, <code>nickname = user_id</code>, <code>level = 1</code> 확인</td></tr>
+  <tr><td>2</td><td>같은 아이디로 <code>/signup</code> 재호출</td><td><code>result:false</code> + 행 개수가 여전히 1</td></tr>
+  <tr><td>3</td><td><code>/login</code> 정상 / 틀린 비번</td><td>각각 <code>result:true</code> / <code>result:false</code></td></tr>
+  <tr><td>4</td><td>UE 실행 후 로그인 전 StartServer 클릭</td><td>레벨 이동이 일어나지 않음</td></tr>
+  <tr><td>5</td><td>틀린 비번으로 로그인</td><td>실패 메시지 표시, 두 버튼 비활성 유지</td></tr>
+  <tr><td>6</td><td>정상 로그인</td><td><code>junios (Lv.1)</code> 표시, 두 버튼 활성, StartServer 정상 동작</td></tr>
+  <tr><td>7</td><td>서버를 끈 상태로 로그인</td><td>&quot;서버에 연결할 수 없습니다&quot; 표시 (멈추거나 크래시하지 않음)</td></tr>
+</table>
+
+<p>1~3번은 <code>/docs</code> Swagger UI에서, 4~7번은 UE 에디터 PIE에서 확인합니다.
+각 단계는 <strong>이전 단계가 통과한 뒤에만</strong> 진행합니다.</p>
+
+<hr>
+
+<h2>4. 이번 범위 밖</h2>
+<ul>
+  <li><strong>소켓 서버</strong> &mdash; 구조도의 <code>서버(Socket, Web)</code> 중 Socket 부분. 게임 멀티플레이는 지금처럼 UE 내장 리슨 서버를 계속 사용</li>
+  <li>세션 / 토큰 인증, 로그아웃</li>
+  <li>비밀번호 해시, HTTPS</li>
+  <li>pytest 자동 테스트 &mdash; <code>/docs</code> 수동 확인으로 대체</li>
+  <li>UE 리슨 서버가 접속자의 로그인 여부를 재검증하는 것 (현재는 클라이언트 화면 게이트까지만)</li>
+  <li><code>level</code> 컬럼을 게임 로직에서 사용하는 것 (지금은 표시만)</li>
+</ul>
+
+<h2>5. 변경 파일 요약</h2>
+<table>
+  <tr><th>구분</th><th>경로</th><th>내용</th></tr>
+  <tr><td>신규</td><td><code>Server/main.py</code></td><td>FastAPI 앱, 라우트 2개, Pydantic 모델</td></tr>
+  <tr><td>신규</td><td><code>Server/db.py</code></td><td>PyMySQL 커넥션 + 접속 설정</td></tr>
+  <tr><td>신규</td><td><code>Server/requirements.txt</code></td><td>fastapi, uvicorn, pymysql</td></tr>
+  <tr><td>신규</td><td><code>Source/L20260713_Day03/Web/WebApiSubsystem.h/.cpp</code></td><td>HTTP 호출 · JSON 파싱 · 결과 델리게이트</td></tr>
+  <tr><td>수정</td><td><code>Source/L20260713_Day03/L20260713_Day03.Build.cs</code></td><td><code>HTTP</code>, <code>Json</code>, <code>JsonUtilities</code> 추가</td></tr>
+  <tr><td>수정</td><td><code>Source/L20260713_Day03/DataGameInstanceSubsystem.h</code></td><td>필드 4개 추가</td></tr>
+  <tr><td>수정</td><td><code>Source/L20260713_Day03/Title/TitleWidgetBase.h/.cpp</code></td><td>버튼 2개 · 텍스트 1개, 게이트 로직, 델리게이트 구독</td></tr>
+  <tr><td>수정</td><td><code>WBP_Title</code> (블루프린트 자산)</td><td>버튼 2개 · 텍스트 1개 배치 <span class="meta">(에디터 작업)</span></td></tr>
+  <tr><td>&mdash;</td><td>DB 스키마</td><td><strong>변경 없음</strong> <span class="meta">(UNIQUE 인덱스 기존재 확인)</span></td></tr>
+</table>
+
+<h2>6. 남은 결정사항</h2>
+<ol>
+  <li><s>UNIQUE 인덱스가 이미 있나요?</s> <strong>&rarr; 있음. 스키마 변경 없음.</strong></li>
+  <li><s>가상환경 vs 전역 설치?</s> <strong>&rarr; <code>Server/.venv</code> 가상환경.</strong></li>
+  <li><s>pytest를 포함할까요?</s> <strong>&rarr; 제외. <code>/docs</code> 수동 확인.</strong></li>
+  <li><s><code>meta = (WidgetBind)</code> 오타를 고칠까요?</s> <strong>&rarr; <code>TitleWidgetBase.h</code> 4개 수정 완료 (<code>d568bf4</code>).</strong></li>
+  <li><code>LobbyWidgetBase.h</code>의 동일 오타 6개는 어떻게 할까요? <span class="meta">(미결 &mdash; 범위 밖이라 보류)</span></li>
+</ol>
+
+<h2>7. 작업 기록</h2>
+<table>
+  <tr><th>커밋</th><th>내용</th></tr>
+  <tr><td><code>aadfe33</code></td><td>설계 문서 및 참고 자료 추가</td></tr>
+  <tr><td><code>d568bf4</code></td><td><code>TitleWidgetBase</code> 바인딩 지정자 오타 수정</td></tr>
+</table>
+<p class="meta">브랜치: <code>feature/login-signup</code> (<code>main</code>에서 분기)</p>
+
+</body>
+</html>
